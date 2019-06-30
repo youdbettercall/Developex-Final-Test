@@ -141,7 +141,8 @@ void GraphicInterface::modifyLineInResultTable(const QString &url, const QString
     {
         if (ui->tableWidget->item(row, 0)->text() == url)
         {
-            qDebug() << __FUNCTION__ << " : " << "updating table";
+            qDebug() << __FUNCTION__ << " : " << "updating table: "
+                     << url << status << result;
             ui->tableWidget->setItem(row, 1, new QTableWidgetItem(status));
             ui->tableWidget->setItem(row, 2, new QTableWidgetItem(result));
             return;

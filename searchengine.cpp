@@ -90,7 +90,7 @@ QString findUrlInLine(const QString& line)
 
 
     if (url.isNull()) return QString();
-    if (!url.endsWith(".html")) return QString();;
+    //if (!url.endsWith(".html")) return QString();
 
     return url;
 }
@@ -104,16 +104,14 @@ typedef std::unique_lock<std::mutex> Lock_t;
 SearchEngine::SearchEngine(QObject */*parent*/) :
     mStartUrl(),
     mTextToFind(),
-    mThreadsNumber(1),
-    mMaxUrls(1),
+    mMaxUrlsCount(1),
     mFoundUrlsCount(1),
-    mCurrentUrlIndex(0),
+    mUrlsProcessedCount(0),
     mIsStopped(false)
 {
     qDebug() << __FUNCTION__ << ":" << __LINE__;
 
     connect(&mNetworkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(downloadSuccessfull(QNetworkReply*)));
-    connect(this, SIGNAL(processNextUrl(const QString&)), this, SLOT(processUrl(const QString&)));
 }
 
 SearchEngine::~SearchEngine()
@@ -131,14 +129,12 @@ void SearchEngine::start(const QString& url,
 
     mStartUrl = url;
     mTextToFind = text;
-    mThreadsNumber = threadsNumber ;
-    mMaxUrls = urlsNumber <= 1 ? 1 :  urlsNumber;
-    {
-        Lock_t lock(mUrlsListMtx);
-        mFoundUrlsInFile.push_back(mStartUrl);
-    }
-    emit foundUrl(mStartUrl, QString("Downloading..."), QString(" "));
+    mThreadsNumber = threadsNumber;
 
+    mMaxUrlsCount = urlsNumber <= 1 ? 1 :  urlsNumber;
+
+    emit foundUrl(mStartUrl, QString("Downloading..."), QString(" "));
+    mFoundUrlsVector.push_back(url);
     mIsStopped = false;
     processUrl(mStartUrl);
 }
@@ -147,22 +143,23 @@ void SearchEngine::stop()
 {
     qDebug() << __FUNCTION__ << ":" << __LINE__;
 
-    mCurrentDownloads.clear();
-
     Lock_t lock(mUrlsListMtx);
     mIsStopped = true;
-    mFoundUrlsInFile.clear();
+
+    mUrlsQueue.clear();
+    mFoundUrlsVector.clear();
+    mCurrentDownloadsList.clear();
 
     mStartUrl= "";
     mTextToFind = "";
     mThreadsNumber = 1 ;
-    mMaxUrls = 1;
+    mMaxUrlsCount = 1;
     mFoundUrlsCount = 1;
-    mCurrentUrlIndex = 0;
+    mUrlsProcessedCount = 0;
 }
 
 
-void SearchEngine::downloadSuccessfull(QNetworkReply *reply)
+void SearchEngine::downloadSuccessfull(QNetworkReply* reply)
 {
     qDebug() << __FUNCTION__ << " : " << reply->url();
 
@@ -172,10 +169,6 @@ void SearchEngine::downloadSuccessfull(QNetworkReply *reply)
     if (reply->error())
     {
         emit updateUrlStatus(reply->url().toString(), "Process URL failed", reply->errorString());
-        if (mCurrentUrlIndex != mFoundUrlsInFile.size() - 1)
-        {
-            emit processNextUrl(mFoundUrlsInFile[++mCurrentUrlIndex]);
-        }
         reply->deleteLater();
         return;
     }
@@ -184,10 +177,6 @@ void SearchEngine::downloadSuccessfull(QNetworkReply *reply)
     if (saveFile(reply, filename) == false)
     {
         emit updateUrlStatus(filename, "Process URL failed", "Search failed");
-        if (mCurrentUrlIndex != mFoundUrlsInFile.size() - 1)
-        {
-            emit processNextUrl(mFoundUrlsInFile[++mCurrentUrlIndex]);
-        }
         reply->deleteLater();
         return;
     }
@@ -201,27 +190,37 @@ void SearchEngine::downloadSuccessfull(QNetworkReply *reply)
 
     deleteFile(filename);
 
-    if (mCurrentUrlIndex != mFoundUrlsInFile.size() - 1)
-    {
-        emit processNextUrl(mFoundUrlsInFile[++mCurrentUrlIndex]);
-    }
-    else
-    {
+    if (mUrlsProcessedCount++ == mMaxUrlsCount)
         emit searchFinished();
+
+    for(size_t i = 0; i < mUrlsQueue.size(); i++)
+    {
+        QString url;
+        {
+            Lock_t lock(mUrlsListMtx);
+            url = mUrlsQueue.front();
+            mUrlsQueue.pop_front();
+        }
+        processUrl(url);
     }
 }
+
 
 void SearchEngine::processUrl(const QString& url)
 {
     if (mIsStopped)
         return;
 
+    if (url.isEmpty())
+        return;
+
     qDebug() << __FUNCTION__ << " : " << url;
 
     QNetworkRequest request((QUrl(url)));
+
     QNetworkReply* reply = mNetworkManager.get(request);
 
-    mCurrentDownloads.append(reply);
+    mCurrentDownloadsList.append(reply);
 }
 
 bool SearchEngine::findText(const QString& filename)
@@ -248,18 +247,21 @@ bool SearchEngine::findText(const QString& filename)
 
         {
             Lock_t lock(mUrlsListMtx);
-            if (mMaxUrls == mFoundUrlsCount) continue;
+            if (mMaxUrlsCount == mFoundUrlsCount)
+                continue;
         }
+
         QString url = findUrlInLine(line);
         if (!url.isNull())
         {
             {
                 Lock_t lock(mUrlsListMtx);
-                auto it = std::find(mFoundUrlsInFile.begin(), mFoundUrlsInFile.end(), url);
-                if (it != mFoundUrlsInFile.end())
+                auto it = std::find(mFoundUrlsVector.begin(), mFoundUrlsVector.end(), url);
+                if (it != mFoundUrlsVector.end())
                     continue;
 
-                mFoundUrlsInFile.push_back(url);
+                mUrlsQueue.push_back(url);
+                mFoundUrlsVector.push_back(url);
                 mFoundUrlsCount++;
                 emit foundUrl(url, "Processing...", "");
             }

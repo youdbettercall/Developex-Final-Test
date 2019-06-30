@@ -9,8 +9,6 @@
 #include <QFile>
 #include <QUrl>
 #include <mutex>
-#include <condition_variable>
-
 
 namespace search
 {
@@ -25,8 +23,7 @@ public:
     void stop();
 
 public slots:
-    void downloadSuccessfull(QNetworkReply *reply);
-    void processUrl(const QString &url);
+    void downloadSuccessfull(QNetworkReply*);
 
 signals:
     void foundUrl(const QString& url, const QString& status, const QString& result);
@@ -35,6 +32,7 @@ signals:
     void searchFinished();
 
 private:
+    void processUrl(const QString &url);
     bool findText(const QString& filename);
 
 
@@ -42,17 +40,19 @@ private:
     QString                 mStartUrl;
     QString                 mTextToFind;
     int                     mThreadsNumber;
-    size_t                  mMaxUrls;
+    size_t                  mMaxUrlsCount;
+
     size_t                  mFoundUrlsCount;
-    size_t                  mCurrentUrlIndex;
+    size_t                  mUrlsProcessedCount;
+
     bool                    mIsStopped;
 
     QNetworkAccessManager   mNetworkManager;
-    QList<QNetworkReply*>   mCurrentDownloads;
-    std::vector<QString>    mFoundUrlsInFile;
+    QList<QNetworkReply*>   mCurrentDownloadsList;
 
+    std::list<QString>      mUrlsQueue;
+    std::vector<QString>    mFoundUrlsVector;
     std::mutex              mUrlsListMtx;
 };
-
 }//end of namespace
 #endif // SEARCHENGINE_H
